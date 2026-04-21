@@ -1,0 +1,266 @@
+version: '3.8'
+
+x-spark-common: &spark-common
+  image: apache/spark:3.5.0
+  volumes:
+    - ./jobs:/opt/spark/jobs
+    - ./mnt/checkpoints:/opt/spark/checkpoints
+    - ./mnt/spark-state:/opt/spark/state
+  networks:
+    - codewithaman
+
+services:
+
+  # 🔹 Kafka (LOW RAM)
+  kafka-broker-1:
+    image: apache/kafka:3.8.1
+    container_name: kafka-broker-1
+##    29092 mere local pc ka port h or containers k beech baat krne k liye 19092 hai
+##    or kafka s baat krne k liye local host k through 9092 hai and 9093 controller communication k liye
+    ports:
+      - "29092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: 'PLAINTEXT://:19092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-broker-1:19092,PLAINTEXT_HOST://localhost:29092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-broker-1:9093
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_HEAP_OPTS: "-Xmx256M -Xms256M"
+    volumes:
+      - broker_data_1:/var/lib/kafka/data
+    networks:
+      - codewithaman
+
+  # 🔹 Schema Registry
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.1
+    container_name: schema-registry
+    ports:
+      - "18081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka-broker-1:19092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:18081
+      SCHEMA_REGISTRY_HEAP_OPTS: "-Xmx256M -Xms256M"
+    depends_on:
+      - kafka-broker-1
+    networks:
+      - codewithaman
+
+  # 🔹 Kafka UI
+  console:
+      image: docker.redpanda.com/redpandadata/console:v2.5.2
+      entrypoint: /bin/sh
+      command:
+        -c 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/config.yml; /app/console'
+      ports:
+        - "8080:8080"
+      depends_on:
+        - schema-registry
+      restart: on-failure
+      environment:
+        CONFIG_FILEPATH: /tmp/config.yml
+        CONSOLE_CONFIG_FILE: >
+          kafka:
+            brokers: ["kafka-broker-1:19092"]
+            schemaRegistry:
+              enabled: true
+              urls: ["http://schema-registry:18081"]
+
+          redpanda:
+            adminApi:
+              enabled: false
+              urls: ["http://kafka_broker:9644"]
+          connect:
+            enabled: false
+            clusters:
+              - name: local-connect-cluster
+                url: http://connect:8083
+      networks:
+        - codewithaman
+
+  # 🔹 Spark Master
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_DAEMON_MEMORY=1G
+    ports:
+      - "9190:8080"
+      - "7077:7077"
+    volumes:
+      - ./jobs:/opt/spark/jobs
+    networks:
+      - codewithaman
+
+  # 🔹 Spark Worker (ULTRA LOW)
+  spark-worker-1:
+    image: apache/spark:3.5.0
+    container_name: spark-worker-1
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_MEMORY=1G
+    volumes:
+      - ./jobs:/opt/spark/jobs
+    networks:
+      - codewithaman
+
+  # 🔹 Cassandra (LOW RAM)
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      - MAX_HEAP_SIZE=256M
+      - HEAP_NEWSIZE=64M
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - codewithaman
+
+#   🔹 Airflow Init
+  airflow-init:
+    image: apache/airflow:2.9.1
+    depends_on:
+      - cassandra
+    entrypoint: /bin/bash
+    command: >
+      -c "
+      airflow db init &&
+      airflow users create \
+        --username admin \
+        --password admin \
+        --firstname Aman \
+        --lastname Arora \
+        --role Admin \
+        --email admin@example.com
+      "
+    environment:
+      - AIRFLOW__CORE__PARALLELISM=1
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow-data:/opt/airflow
+    networks:
+      - codewithaman
+
+#   🔹 Airflow Webserver
+#  airflow-webserver:
+#    image: apache/airflow:2.9.1
+#    container_name: airflow-webserver
+#    depends_on:
+#      - airflow-init
+#    ports:
+#      - "8085:8080"
+#    command: webserver
+#    environment:
+#      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+#      - AIRFLOW__CORE__PARALLELISM=1
+#      - AIRFLOW__CORE__DAG_CONCURRENCY=1
+#      - AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG=1
+#      - AIRFLOW__WEBSERVER__WORKERS=1
+#    volumes:
+#      - ./dags:/opt/airflow/dags
+#      - ./airflow-data:/opt/airflow
+#    networks:
+#      - codewithaman
+
+#  airflow-webserver:
+#    image: apache/airflow:2.9.1
+#    container_name: airflow-webserver
+#    depends_on:
+#      - airflow-init
+#    restart: "no"
+#    ports:
+#      - "8085:8080"
+#    environment:
+#      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+#      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+#      - AIRFLOW__CORE__PARALLELISM=1
+#      - AIRFLOW__WEBSERVER__WORKERS=2
+#    volumes:
+#      - ./dags:/opt/airflow/dags
+#      - ./airflow-data:/opt/airflow
+#    command: webserver
+#    networks:
+#      - codewithaman
+#
+#  # 🔹 Airflow Scheduler
+#  airflow-scheduler:
+#    image: apache/airflow:2.9.1
+#    container_name: airflow-scheduler
+#    depends_on:
+#      - airflow-init
+#    command: scheduler
+#    environment:
+#      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+#      - AIRFLOW__CORE__PARALLELISM=1
+#      - AIRFLOW__SCHEDULER__MAX_THREADS=1
+#    volumes:
+#      - ./dags:/opt/airflow/dags
+#      - ./airflow-data:/opt/airflow
+#    networks:
+#      - codewithaman
+  airflow-webserver:
+    image: apache/airflow:2.9.1
+    container_name: airflow-webserver
+    depends_on:
+      - airflow-init
+    restart: "no"
+    ports:
+      - "8085:8080"
+    environment:
+      - AIRFLOW_CORE_EXECUTOR=SequentialExecutor
+      - AIRFLOW_CORE_LOAD_EXAMPLES=False
+      - AIRFLOW_CORE_PARALLELISM=1
+      - AIRFLOW_WEBSERVER_WORKERS=1
+      - AIRFLOW_WEBSERVER_WEB_SERVER_WORKER_TIMEOUT=120
+      - AIRFLOW_CORE_DAGBAG_IMPORT_TIMEOUT=30
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow-data:/opt/airflow
+    command: webserver
+    mem_limit: 512m
+    cpus: 0.5
+    networks:
+      - codewithaman
+
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.1
+    container_name: airflow-scheduler
+    depends_on:
+      - airflow-init
+    command: scheduler
+    environment:
+      - AIRFLOW_CORE_EXECUTOR=SequentialExecutor
+      - AIRFLOW_CORE_PARALLELISM=1
+      - AIRFLOW_SCHEDULER_MAX_THREADS=1
+      - AIRFLOW_SCHEDULER_DAG_DIR_LIST_INTERVAL=60
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow-data:/opt/airflow
+    mem_limit: 512m
+    cpus: 0.5
+    networks:
+      - codewithaman
+volumes:
+  broker_data_1:
+  controller_data_1:
+  cassandra_data:
+
+networks:
+  codewithaman:
+
