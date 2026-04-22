@@ -60,7 +60,6 @@ docker-compose up -d
 This will start:
 
 * Kafka cluster
-* Zookeeper
 * Spark master & worker
 * Cassandra
 
