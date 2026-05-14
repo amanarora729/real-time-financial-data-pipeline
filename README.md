@@ -3,6 +3,10 @@
 A real-time data engineering project that simulates financial transactions and processes them using **Apache Kafka**, **Apache Spark Structured Streaming**, and **Cassandra**. The entire pipeline is containerized using Docker for easy setup and scalability.
 
 ---
+## Architecture
+![Architecture](images/Architecture.png)
+
+
 
 ## 📌 Tech Stack
 
