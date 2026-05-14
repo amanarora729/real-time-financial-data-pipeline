@@ -18,6 +18,11 @@ A real-time data engineering project that simulates financial transactions and p
 ## Cassandra Output
 ![Cassandra](images/cassandra-output.png)
 
+---
+## Docker Containers
+![Docker Containers](images/docker-containers.png)
+
+---
 ## 📌 Tech Stack
 
 * Apache Kafka
