@@ -6,7 +6,17 @@ A real-time data engineering project that simulates financial transactions and p
 ## Architecture
 ![Architecture](images/Architecture.png)
 
+---
+## Kafka Streaming
+![Kafka](images/kafka-producer-stream.png)
 
+---
+## Spark UI
+![Spark](images/spark-processing.png)
+
+---
+## Cassandra Output
+![Cassandra](images/cassandra-output.png)
 
 ## 📌 Tech Stack
 
